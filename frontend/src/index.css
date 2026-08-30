@@ -1,0 +1,36 @@
+/* =========================================
+   AI FINANCE CONTROLLER
+   Global Design System
+========================================= */
+
+:root {
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  background: #08111f;
+  color: #dbe4f0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: #08111f;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #08111f;
+}
+
+#root {
+  min-height: 100vh;
+  width: 100%;
+}

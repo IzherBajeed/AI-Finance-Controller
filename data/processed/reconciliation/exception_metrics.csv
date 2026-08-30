@@ -1,0 +1,6 @@
+exception_type,actual_count,detected_count,true_positive,false_positive,false_negative,precision,recall,f1_score
+INVOICE_MISMATCH,39,39,39,0,0,1.0,1.0,1.0
+DUPLICATE_PAYMENT,12,12,12,0,0,1.0,1.0,1.0
+MISSING_SETTLEMENT,35,35,35,0,0,1.0,1.0,1.0
+DELAYED_SETTLEMENT,18,18,18,0,0,1.0,1.0,1.0
+AMOUNT_MISMATCH,46,46,46,0,0,1.0,1.0,1.0
