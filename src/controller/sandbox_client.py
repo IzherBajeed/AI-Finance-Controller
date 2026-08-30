@@ -1,3 +1,4 @@
+import os
 import requests
 
 
@@ -5,9 +6,10 @@ import requests
 # Configuration
 # ============================================================
 
-SANDBOX_BASE_URL = (
+SANDBOX_BASE_URL = os.getenv(
+    "SANDBOX_BASE_URL",
     "http://127.0.0.1:5001"
-)
+).rstrip("/")
 
 REQUEST_TIMEOUT = 10
 

@@ -32,6 +32,16 @@ if PROJECT_ROOT not in sys.path:
 
 
 # ============================================================
+# CORS Configuration
+# ============================================================
+
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "http://localhost:5173"
+).rstrip("/")
+
+
+# ============================================================
 # Application Factory
 # ============================================================
 
@@ -48,9 +58,7 @@ def create_app():
     # --------------------------------------------------------
     # Enable CORS
     #
-    # Allows the React frontend running on:
-    # http://localhost:5173
-    #
+    # Allows both local development and the deployed frontend
     # to communicate with this Flask API.
     # --------------------------------------------------------
 
@@ -59,6 +67,7 @@ def create_app():
         resources={
             r"/api/*": {
                 "origins": [
+                    FRONTEND_URL,
                     "http://localhost:5173",
                     "http://127.0.0.1:5173"
                 ]
