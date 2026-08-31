@@ -501,57 +501,121 @@ function ExceptionQueue() {
   /* ======================================================= */
 
   async function openException(
-    exceptionId
-  ) {
+  exceptionId
+) {
 
-    try {
+  try {
 
-      setError("");
-      setActionMessage("");
-
-      const response =
-        await fetch(
-          `${API_BASE}/exceptions/${exceptionId}`
-        );
+    setError("");
+    setActionMessage("");
 
 
-      if (!response.ok) {
+    /*
+     * Load both the exception snapshot and the latest
+     * controller workflow state.
+     */
 
-        throw new Error(
-          `Failed to load exception: ${response.status}`
-        );
+    const [
+      exceptionResponse,
+      actionResponse
+    ] = await Promise.all([
 
-      }
+      fetch(
+        `${API_BASE}/exceptions/${exceptionId}`,
+        { cache: "no-store" }
+      ),
 
+      fetch(
+        `${API_BASE}/controller/actions/${exceptionId}`,
+        { cache: "no-store" }
+      ),
 
-      const data =
-        await response.json();
-
-
-      if (!data.success) {
-
-        throw new Error(
-          "Exception details could not be loaded."
-        );
-
-      }
+    ]);
 
 
-      setSelectedException(
-        data
-      );
+    if (!exceptionResponse.ok) {
 
-    } catch (err) {
-
-      console.error(err);
-
-      setError(
-        "Unable to load exception details."
+      throw new Error(
+        `Failed to load exception: ${exceptionResponse.status}`
       );
 
     }
 
+
+    const data =
+      await exceptionResponse.json();
+
+
+    if (!data.success) {
+
+      throw new Error(
+        "Exception details could not be loaded."
+      );
+
+    }
+
+
+    /*
+     * Start with the action returned by the exception API.
+     */
+    let latestAction =
+      data.action || {};
+
+
+    /*
+     * IMPORTANT:
+     * Controller action API is the authoritative source
+     * for approval, execution and verification status.
+     */
+    if (actionResponse.ok) {
+
+      const actionData =
+        await actionResponse.json();
+
+
+      if (
+        actionData &&
+        actionData.success &&
+        actionData.action
+      ) {
+
+        latestAction =
+          actionData.action;
+
+      }
+
+    }
+
+
+    /*
+     * Merge the latest workflow state into the exception.
+     */
+    setSelectedException({
+
+      ...data,
+
+      action: {
+
+        ...(data.action || {}),
+
+        ...latestAction,
+
+      },
+
+    });
+
+
+  } catch (err) {
+
+    console.error(err);
+
+    setError(
+      "Unable to load exception details."
+    );
+
   }
+
+}
 
 
   /* ======================================================= */
@@ -1765,47 +1829,61 @@ function ExceptionDetails({
     ).toUpperCase();
 
 
-  const isApproved =
-    approvalStatus === "APPROVED" ||
-    approvalStatus === "VERIFIED";
+  const verificationStatus =
+  String(
+    action.verification_status ||
+    ""
+  ).toUpperCase();
 
 
-  const isVerified =
-    actionStatus === "VERIFIED" ||
-    executionResult === "SANDBOX_VERIFIED";
+const isVerified =
+  approvalStatus === "VERIFIED" ||
+  actionStatus === "VERIFIED" ||
+  executionResult === "SANDBOX_VERIFIED" ||
+  verificationStatus === "VERIFIED";
 
-  /*
-   * Review-only actions must never be sent to the sandbox.
-   * These actions represent human/controller review and do not
-   * require execution or post-execution verification.
-   */
-  const proposedAction =
-    String(
-      action.proposed_action || ""
-    ).toUpperCase();
 
-  const isReviewOnly =
-    executionResult === "REVIEW_ONLY" ||
-    proposedAction === "REVIEW_INVOICE_DIFFERENCE" ||
-    proposedAction === "REVIEW_SETTLEMENT_DIFFERENCE" ||
-    proposedAction === "REVIEW_SETTLEMENT_DELAY" ||
-    proposedAction === "MANUAL_FINANCIAL_REVIEW" ||
-    proposedAction === "GENERAL_REVIEW";
+const isApproved =
+  approvalStatus === "APPROVED";
 
-  const canApprove =
-    approvalStatus === "PENDING_APPROVAL";
 
-  const canExecute =
-    isApproved &&
-    !isVerified &&
-    !isReviewOnly &&
-    executionResult !== "SANDBOX_EXECUTED";
+const proposedAction =
+  String(
+    action.proposed_action || ""
+  ).toUpperCase();
 
-  const canVerify =
-    executionResult === "SANDBOX_EXECUTED" &&
-    !isVerified &&
-    !isReviewOnly;
 
+const isReviewOnly =
+  executionResult === "REVIEW_ONLY" ||
+  actionStatus === "REVIEW_ONLY" ||
+  proposedAction === "REVIEW_INVOICE_DIFFERENCE" ||
+  proposedAction === "REVIEW_SETTLEMENT_DIFFERENCE" ||
+  proposedAction === "REVIEW_SETTLEMENT_DELAY" ||
+  proposedAction === "MANUAL_FINANCIAL_REVIEW" ||
+  proposedAction === "GENERAL_REVIEW";
+
+
+const canApprove =
+  approvalStatus === "PENDING_APPROVAL" &&
+  !isVerified;
+
+
+const canExecute =
+  isApproved &&
+  !isVerified &&
+  !isReviewOnly &&
+  executionResult !== "SANDBOX_EXECUTED" &&
+  executionResult !== "EXECUTED";
+
+
+const canVerify =
+  !isVerified &&
+  !isReviewOnly &&
+  (
+    executionResult === "SANDBOX_EXECUTED" ||
+    executionResult === "EXECUTED" ||
+    actionStatus === "EXECUTED"
+  );
 
   return (
 

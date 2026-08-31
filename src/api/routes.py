@@ -1,6 +1,7 @@
 import os
 
 import pandas as pd
+from src.api.database import supabase
 
 from flask import (
     Blueprint,
@@ -1287,6 +1288,202 @@ def controller_queue():
         }), 500
 
 
+
+
+# ============================================================
+# CONTROLLER WORKFLOW HELPERS
+# ============================================================
+
+def get_controller_record(exception_id):
+
+    df = load_csv(
+        APPROVAL_FILE
+    )
+
+    if df is None:
+
+        return None, None, None
+
+    matches = df[
+        df["exception_id"]
+        .astype(str)
+        == str(exception_id)
+    ]
+
+    if matches.empty:
+
+        return df, None, None
+
+    index = matches.index[0]
+
+    record = clean_record(
+        matches.iloc[0].to_dict()
+    )
+
+    return df, index, record
+
+
+def get_workflow_state(exception_id):
+
+    response = (
+        supabase
+        .table("controller_actions")
+        .select("*")
+        .eq(
+            "exception_id",
+            str(exception_id)
+        )
+        .execute()
+    )
+
+    if response.data:
+
+        return response.data[0]
+
+    return None
+
+
+def save_workflow_state(
+    exception_id,
+    workflow_data
+):
+
+    existing = get_workflow_state(
+        exception_id
+    )
+
+    data = {
+        "exception_id":
+            str(exception_id),
+        **workflow_data
+    }
+
+    if existing:
+
+        response = (
+            supabase
+            .table("controller_actions")
+            .update(data)
+            .eq(
+                "exception_id",
+                str(exception_id)
+            )
+            .execute()
+        )
+
+    else:
+
+        response = (
+            supabase
+            .table("controller_actions")
+            .insert(data)
+            .execute()
+        )
+
+    if response.data:
+
+        return response.data[0]
+
+    return data
+
+
+def merge_workflow_state(
+    record,
+    workflow
+):
+
+    if not workflow:
+
+        return record
+
+    approval_status = workflow.get(
+        "approval_status"
+    )
+
+    if approval_status:
+
+        record["approval_status"] = (
+            approval_status
+        )
+
+        # Keep UI status synchronized
+        record["action_status"] = (
+            approval_status
+        )
+
+
+    reviewer = workflow.get(
+        "reviewer"
+    )
+
+    if reviewer:
+
+        record["reviewer"] = reviewer
+
+
+    comments = workflow.get(
+        "comments"
+    )
+
+    if comments:
+
+        record["review_comments"] = (
+            comments
+        )
+
+
+    execution_status = workflow.get(
+        "execution_status"
+    )
+
+    if execution_status:
+
+        record["execution_status"] = (
+            execution_status
+        )
+
+        record["execution_result"] = (
+            execution_status
+        )
+
+        if execution_status in [
+            "EXECUTED",
+            "SANDBOX_VERIFIED",
+            "REVIEW_ONLY"
+        ]:
+
+            record["action_status"] = (
+                execution_status
+            )
+
+
+    verification_status = workflow.get(
+        "verification_status"
+    )
+
+    if verification_status:
+
+        record["verification_status"] = (
+            verification_status
+        )
+
+        if verification_status == "VERIFIED":
+
+            record["approval_status"] = (
+                "VERIFIED"
+            )
+
+            record["action_status"] = (
+                "VERIFIED"
+            )
+
+            record["execution_result"] = (
+                "SANDBOX_VERIFIED"
+            )
+
+    return record
+
+
 # ============================================================
 # SINGLE CONTROLLER ACTION
 # ============================================================
@@ -1301,42 +1498,41 @@ def controller_action(
 
     try:
 
-        df = load_csv(
-            APPROVAL_FILE
+        df, index, record = (
+            get_controller_record(
+                exception_id
+            )
         )
 
         if df is None:
 
             return jsonify({
                 "success": False,
-                "error": "Approval queue not found."
+                "error":
+                    "Approval queue not found."
             }), 404
 
-        matches = df[
-            df["exception_id"]
-            .astype(str)
-            == str(exception_id)
-        ]
 
-        if matches.empty:
+        if record is None:
 
             return jsonify({
-
                 "success": False,
-
                 "error":
                     "Controller action not found.",
-
                 "exception_id":
                     exception_id
-
             }), 404
 
-        record = clean_record(
-            matches.iloc[
-                0
-            ].to_dict()
+
+        workflow = get_workflow_state(
+            exception_id
         )
+
+        record = merge_workflow_state(
+            record,
+            workflow
+        )
+
 
         return jsonify({
 
@@ -1347,12 +1543,15 @@ def controller_action(
 
         }), 200
 
+
     except Exception as error:
 
         return jsonify({
 
             "success": False,
-            "error": str(error)
+
+            "error":
+                str(error)
 
         }), 500
 
@@ -1371,46 +1570,50 @@ def approve_action(
 
     try:
 
-        df = load_csv(
-            APPROVAL_FILE
+        df, index, record = (
+            get_controller_record(
+                exception_id
+            )
         )
 
         if df is None:
 
             return jsonify({
                 "success": False,
-                "error": "Approval queue not found."
+                "error":
+                    "Approval queue not found."
             }), 404
 
-        matches = df[
-            df["exception_id"]
-            .astype(str)
-            == str(exception_id)
-        ]
 
-        if matches.empty:
+        if record is None:
 
             return jsonify({
-
                 "success": False,
-
                 "error":
                     "Controller action not found."
-
             }), 404
 
-        index = matches.index[0]
+
+        # ----------------------------------------------------
+        # Current persistent workflow state
+        # ----------------------------------------------------
+
+        workflow = get_workflow_state(
+            exception_id
+        )
 
         current_status = str(
-            df.loc[
-                index,
-                "approval_status"
-            ]
+            (
+                workflow or {}
+            ).get(
+                "approval_status",
+                record.get(
+                    "approval_status",
+                    "PENDING_APPROVAL"
+                )
+            )
         ).upper()
 
-        # ----------------------------------------------------
-        # State validation
-        # ----------------------------------------------------
 
         if current_status != "PENDING_APPROVAL":
 
@@ -1426,6 +1629,7 @@ def approve_action(
 
             }), 409
 
+
         # ----------------------------------------------------
         # Reviewer information
         # ----------------------------------------------------
@@ -1434,63 +1638,72 @@ def approve_action(
             silent=True
         ) or {}
 
+
         reviewer = data.get(
-            "reviewer",
-            "API_REVIEWER"
-        )
+            "reviewer"
+        ) or "API_REVIEWER"
+
 
         comments = data.get(
-            "comments",
-            "Approved through Finance Controller API."
+            "comments"
+        ) or (
+            "Approved through Finance "
+            "Controller API."
         )
+
 
         # ----------------------------------------------------
-        # Update state
+        # Save persistent workflow state
         # ----------------------------------------------------
 
-        df.loc[
-            index,
-            "approval_status"
-        ] = "APPROVED"
+        save_workflow_state(
 
-        df.loc[
-            index,
-            "review_decision"
-        ] = "APPROVE"
+            exception_id,
 
-        df.loc[
-            index,
-            "reviewer"
-        ] = str(reviewer)
+            {
 
-        df.loc[
-            index,
-            "review_comments"
-        ] = str(comments)
+                "approval_status":
+                    "APPROVED",
 
-        df.loc[
-            index,
-            "execution_allowed"
-        ] = True
+                "reviewer":
+                    str(reviewer),
 
-        # Keep action status synchronized
-        if "action_status" in df.columns:
+                "comments":
+                    str(comments)
 
-            df.loc[
-                index,
-                "action_status"
-            ] = "APPROVED"
+            }
 
-        df.to_csv(
-            APPROVAL_FILE,
-            index=False
         )
 
-        updated = clean_record(
-            df.loc[
-                index
-            ].to_dict()
+
+        # ----------------------------------------------------
+        # Build response
+        # ----------------------------------------------------
+
+        record["approval_status"] = (
+            "APPROVED"
         )
+
+        record["action_status"] = (
+            "APPROVED"
+        )
+
+        record["review_decision"] = (
+            "APPROVE"
+        )
+
+        record["reviewer"] = (
+            str(reviewer)
+        )
+
+        record["review_comments"] = (
+            str(comments)
+        )
+
+        record["execution_allowed"] = (
+            True
+        )
+
 
         return jsonify({
 
@@ -1500,16 +1713,19 @@ def approve_action(
                 "Action approved successfully.",
 
             "action":
-                updated
+                record
 
         }), 200
+
 
     except Exception as error:
 
         return jsonify({
 
             "success": False,
-            "error": str(error)
+
+            "error":
+                str(error)
 
         }), 500
 
@@ -1528,42 +1744,46 @@ def reject_action(
 
     try:
 
-        df = load_csv(
-            APPROVAL_FILE
+        df, index, record = (
+            get_controller_record(
+                exception_id
+            )
         )
 
         if df is None:
 
             return jsonify({
                 "success": False,
-                "error": "Approval queue not found."
+                "error":
+                    "Approval queue not found."
             }), 404
 
-        matches = df[
-            df["exception_id"]
-            .astype(str)
-            == str(exception_id)
-        ]
 
-        if matches.empty:
+        if record is None:
 
             return jsonify({
-
                 "success": False,
-
                 "error":
                     "Controller action not found."
-
             }), 404
 
-        index = matches.index[0]
+
+        workflow = get_workflow_state(
+            exception_id
+        )
 
         current_status = str(
-            df.loc[
-                index,
-                "approval_status"
-            ]
+            (
+                workflow or {}
+            ).get(
+                "approval_status",
+                record.get(
+                    "approval_status",
+                    "PENDING_APPROVAL"
+                )
+            )
         ).upper()
+
 
         if current_status != "PENDING_APPROVAL":
 
@@ -1579,66 +1799,73 @@ def reject_action(
 
             }), 409
 
+
         data = request.get_json(
             silent=True
         ) or {}
 
+
         reviewer = data.get(
-            "reviewer",
-            "API_REVIEWER"
-        )
+            "reviewer"
+        ) or "API_REVIEWER"
+
 
         comments = data.get(
-            "comments",
-            "Rejected through Finance Controller API."
+            "comments"
+        ) or (
+            "Rejected through Finance "
+            "Controller API."
         )
+
 
         # ----------------------------------------------------
-        # Update state
+        # Save rejection in Supabase
         # ----------------------------------------------------
 
-        df.loc[
-            index,
-            "approval_status"
-        ] = "REJECTED"
+        save_workflow_state(
 
-        df.loc[
-            index,
-            "review_decision"
-        ] = "REJECT"
+            exception_id,
 
-        df.loc[
-            index,
-            "reviewer"
-        ] = str(reviewer)
+            {
 
-        df.loc[
-            index,
-            "review_comments"
-        ] = str(comments)
+                "approval_status":
+                    "REJECTED",
 
-        df.loc[
-            index,
-            "execution_allowed"
-        ] = False
+                "reviewer":
+                    str(reviewer),
 
-        if "action_status" in df.columns:
+                "comments":
+                    str(comments)
 
-            df.loc[
-                index,
-                "action_status"
-            ] = "REJECTED"
+            }
 
-        df.to_csv(
-            APPROVAL_FILE,
-            index=False
         )
 
-        updated = clean_record(
-            df.loc[
-                index
-            ].to_dict()
+
+        record["approval_status"] = (
+            "REJECTED"
         )
+
+        record["action_status"] = (
+            "REJECTED"
+        )
+
+        record["review_decision"] = (
+            "REJECT"
+        )
+
+        record["reviewer"] = (
+            str(reviewer)
+        )
+
+        record["review_comments"] = (
+            str(comments)
+        )
+
+        record["execution_allowed"] = (
+            False
+        )
+
 
         return jsonify({
 
@@ -1648,18 +1875,22 @@ def reject_action(
                 "Action rejected successfully.",
 
             "action":
-                updated
+                record
 
         }), 200
+
 
     except Exception as error:
 
         return jsonify({
 
             "success": False,
-            "error": str(error)
+
+            "error":
+                str(error)
 
         }), 500
+
 
 # ============================================================
 # EXECUTE APPROVED ACTION
@@ -1669,56 +1900,55 @@ def reject_action(
     "/controller/actions/<exception_id>/execute",
     methods=["POST"]
 )
-def execute_action(exception_id):
+def execute_action(
+    exception_id
+):
 
     try:
 
-        df = load_csv(
-            APPROVAL_FILE
+        df, index, record = (
+            get_controller_record(
+                exception_id
+            )
         )
 
         if df is None:
 
             return jsonify({
                 "success": False,
-                "error": "Approval queue not found."
+                "error":
+                    "Approval queue not found."
             }), 404
 
-        matches = df[
-            df["exception_id"]
-            .astype(str)
-            == str(exception_id)
-        ]
 
-        if matches.empty:
+        if record is None:
 
             return jsonify({
                 "success": False,
-                "error": "Controller action not found."
+                "error":
+                    "Controller action not found."
             }), 404
 
-        index = matches.index[0]
+
+        # ----------------------------------------------------
+        # Supabase is the workflow source of truth
+        # ----------------------------------------------------
+
+        workflow = get_workflow_state(
+            exception_id
+        ) or {}
+
 
         approval_status = str(
-            df.loc[
-                index,
-                "approval_status"
-            ]
+            workflow.get(
+                "approval_status",
+                record.get(
+                    "approval_status",
+                    "PENDING_APPROVAL"
+                )
+            )
         ).upper()
 
-        execution_allowed = (
-            str(
-                df.loc[
-                    index,
-                    "execution_allowed"
-                ]
-            ).lower()
-            == "true"
-        )
-
-        # ----------------------------------------------------
-        # Approval gate
-        # ----------------------------------------------------
 
         if approval_status != "APPROVED":
 
@@ -1734,36 +1964,106 @@ def execute_action(exception_id):
 
             }), 403
 
-        if not execution_allowed:
+
+        # ----------------------------------------------------
+        # Get proposed action from original CSV data
+        # ----------------------------------------------------
+
+        action = str(
+            record.get(
+                "proposed_action",
+                ""
+            )
+        ).upper()
+
+
+        # ----------------------------------------------------
+        # Review-only actions
+        # ----------------------------------------------------
+
+        review_only_actions = [
+
+            "REVIEW_INVOICE_DIFFERENCE",
+
+            "REVIEW_SETTLEMENT_DIFFERENCE",
+
+            "REVIEW_SETTLEMENT_DELAY",
+
+            "MANUAL_FINANCIAL_REVIEW",
+
+            "GENERAL_REVIEW"
+
+        ]
+
+
+        if action in review_only_actions:
+
+            save_workflow_state(
+
+                exception_id,
+
+                {
+
+                    "execution_status":
+                        "REVIEW_ONLY"
+
+                }
+
+            )
+
+
+            record["execution_status"] = (
+                "REVIEW_ONLY"
+            )
+
+            record["execution_result"] = (
+                "REVIEW_ONLY"
+            )
+
+            record["action_status"] = (
+                "REVIEW_ONLY"
+            )
+
 
             return jsonify({
 
-                "success": False,
+                "success": True,
 
-                "error":
-                    "Execution is not allowed for this action."
+                "status":
+                    "REVIEW_ONLY",
 
-            }), 403
+                "exception_id":
+                    exception_id,
 
-        action = str(
-            df.loc[
-                index,
-                "proposed_action"
-            ]
-        )
+                "action":
+                    action,
+
+                "message":
+                    "This action is review-only. "
+                    "No sandbox execution is required.",
+
+                "action_data":
+                    record
+
+            }), 200
+
 
         # ----------------------------------------------------
-        # Existing sandbox client
+        # Execute sandbox action
         # ----------------------------------------------------
 
         from src.controller.sandbox_client import (
             execute_sandbox_action
         )
 
-        sandbox_response = execute_sandbox_action(
-            action,
-            exception_id
+
+        sandbox_response = (
+            execute_sandbox_action(
+                action,
+                exception_id
+            )
         )
+
 
         # ----------------------------------------------------
         # Sandbox failure
@@ -1774,15 +2074,19 @@ def execute_action(exception_id):
             False
         ):
 
-            df.loc[
-                index,
-                "execution_result"
-            ] = "EXECUTION_FAILED"
+            save_workflow_state(
 
-            df.to_csv(
-                APPROVAL_FILE,
-                index=False
+                exception_id,
+
+                {
+
+                    "execution_status":
+                        "EXECUTION_FAILED"
+
+                }
+
             )
+
 
             return jsonify({
 
@@ -1802,76 +2106,37 @@ def execute_action(exception_id):
 
             }), 502
 
+
         # ----------------------------------------------------
         # Sandbox success
         # ----------------------------------------------------
 
-        sandbox_data = sandbox_response.get(
-            "data",
-            {}
+        save_workflow_state(
+
+            exception_id,
+
+            {
+
+                "execution_status":
+                    "EXECUTED"
+
+            }
+
         )
 
-        sandbox_status = str(
-            sandbox_data.get(
-                "status",
-                ""
-            )
-        ).upper()
 
-        # Review-only actions are not financial execution
-        if sandbox_status == "REVIEW_ONLY":
-
-            df.loc[
-                index,
-                "execution_result"
-            ] = "REVIEW_ONLY"
-
-            df.to_csv(
-                APPROVAL_FILE,
-                index=False
-            )
-
-            return jsonify({
-
-                "success": True,
-
-                "status":
-                    "REVIEW_ONLY",
-
-                "exception_id":
-                    exception_id,
-
-                "action":
-                    action,
-
-                "message":
-                    "Action requires financial review and was not executed.",
-
-                "sandbox_response":
-                    sandbox_response
-
-            }), 200
-
-        # ----------------------------------------------------
-        # Actual sandbox execution
-        # ----------------------------------------------------
-
-        df.loc[
-            index,
-            "execution_result"
-        ] = "EXECUTED"
-
-        if "action_status" in df.columns:
-
-            df.loc[
-                index,
-                "action_status"
-            ] = "EXECUTED"
-
-        df.to_csv(
-            APPROVAL_FILE,
-            index=False
+        record["execution_status"] = (
+            "EXECUTED"
         )
+
+        record["execution_result"] = (
+            "EXECUTED"
+        )
+
+        record["action_status"] = (
+            "EXECUTED"
+        )
+
 
         return jsonify({
 
@@ -1887,9 +2152,13 @@ def execute_action(exception_id):
                 action,
 
             "sandbox_response":
-                sandbox_response
+                sandbox_response,
+
+            "action_data":
+                record
 
         }), 200
+
 
     except Exception as error:
 
@@ -1911,12 +2180,16 @@ def execute_action(exception_id):
     "/controller/actions/<exception_id>/verify",
     methods=["POST"]
 )
-def verify_action(exception_id):
+def verify_action(
+    exception_id
+):
 
     try:
 
-        df = load_csv(
-            APPROVAL_FILE
+        df, index, record = (
+            get_controller_record(
+                exception_id
+            )
         )
 
         if df is None:
@@ -1930,13 +2203,8 @@ def verify_action(exception_id):
 
             }), 404
 
-        matches = df[
-            df["exception_id"]
-            .astype(str)
-            == str(exception_id)
-        ]
 
-        if matches.empty:
+        if record is None:
 
             return jsonify({
 
@@ -1947,20 +2215,29 @@ def verify_action(exception_id):
 
             }), 404
 
-        index = matches.index[0]
 
-        execution_result = str(
-            df.loc[
-                index,
-                "execution_result"
-            ]
+        # ----------------------------------------------------
+        # Read persistent execution state
+        # ----------------------------------------------------
+
+        workflow = get_workflow_state(
+            exception_id
+        ) or {}
+
+
+        execution_status = str(
+            workflow.get(
+                "execution_status",
+                ""
+            )
         ).upper()
 
+
         # ----------------------------------------------------
-        # Execution gate
+        # Verification gate
         # ----------------------------------------------------
 
-        if execution_result != "EXECUTED":
+        if execution_status != "EXECUTED":
 
             return jsonify({
 
@@ -1969,44 +2246,56 @@ def verify_action(exception_id):
                 "error":
                     "Action must be executed before verification.",
 
-                "execution_result":
-                    execution_result
+                "execution_status":
+                    execution_status
 
             }), 409
 
+
         # ----------------------------------------------------
-        # Verify sandbox execution
-        # ----------------------------------------------------
-        #
-        # The sandbox client currently does not expose
-        # a separate verification endpoint.
-        #
-        # Therefore, a successful sandbox execution is
-        # treated as the verification evidence for this
-        # sandbox environment.
+        # Persist verified state
         # ----------------------------------------------------
 
-        df.loc[
-            index,
-            "execution_result"
-        ] = "SANDBOX_VERIFIED"
+        save_workflow_state(
 
-        df.loc[
-            index,
-            "approval_status"
-        ] = "VERIFIED"
+            exception_id,
 
-        if "action_status" in df.columns:
+            {
 
-            df.loc[
-                index,
-                "action_status"
-            ] = "VERIFIED"
+                "approval_status":
+                    "VERIFIED",
 
-        df.to_csv(
-            APPROVAL_FILE,
-            index=False
+                "execution_status":
+                    "SANDBOX_VERIFIED",
+
+                "verification_status":
+                    "VERIFIED"
+
+            }
+
         )
+
+
+        record["approval_status"] = (
+            "VERIFIED"
+        )
+
+        record["action_status"] = (
+            "VERIFIED"
+        )
+
+        record["execution_status"] = (
+            "SANDBOX_VERIFIED"
+        )
+
+        record["execution_result"] = (
+            "SANDBOX_VERIFIED"
+        )
+
+        record["verification_status"] = (
+            "VERIFIED"
+        )
+
 
         return jsonify({
 
@@ -2032,9 +2321,13 @@ def verify_action(exception_id):
                 "verified":
                     True
 
-            }
+            },
+
+            "action":
+                record
 
         }), 200
+
 
     except Exception as error:
 
@@ -2046,7 +2339,6 @@ def verify_action(exception_id):
                 str(error)
 
         }), 500
-
 # ============================================================
 # AI INVESTIGATION QUEUE
 # ============================================================

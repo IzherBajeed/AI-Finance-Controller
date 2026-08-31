@@ -1310,3 +1310,13 @@
     margin-left: 44px;
   }
 }
+/* Dropdown option colors */
+.exception-filters select option {
+  background: #18202c;
+  color: #dfe7f2;
+}
+
+/* Keep the select boxes rounded */
+.exception-filters select {
+  border-radius: 8px;
+}
