@@ -1392,38 +1392,62 @@ def merge_workflow_state(
     workflow
 ):
 
+    # ----------------------------------------------------
+    # If no Supabase workflow exists,
+    # keep the original CSV record.
+    # ----------------------------------------------------
+
     if not workflow:
 
         return record
 
-    approval_status = workflow.get(
-        "approval_status"
+
+    # ----------------------------------------------------
+    # APPROVAL STATUS
+    # ----------------------------------------------------
+
+    approval_status = str(
+
+        workflow.get(
+            "approval_status",
+            record.get(
+                "approval_status",
+                "PENDING_APPROVAL"
+            )
+        )
+
+    ).upper()
+
+
+    record["approval_status"] = (
+        approval_status
     )
 
-    if approval_status:
 
-        record["approval_status"] = (
-            approval_status
-        )
-
-        # Keep UI status synchronized
-        record["action_status"] = (
-            approval_status
-        )
-
+    # ----------------------------------------------------
+    # REVIEWER
+    # ----------------------------------------------------
 
     reviewer = workflow.get(
         "reviewer"
     )
 
+
     if reviewer:
 
-        record["reviewer"] = reviewer
+        record["reviewer"] = (
+            reviewer
+        )
 
+
+    # ----------------------------------------------------
+    # REVIEW COMMENTS
+    # ----------------------------------------------------
 
     comments = workflow.get(
         "comments"
     )
+
 
     if comments:
 
@@ -1432,58 +1456,224 @@ def merge_workflow_state(
         )
 
 
-    execution_status = workflow.get(
-        "execution_status"
-    )
+    # ----------------------------------------------------
+    # EXECUTION STATUS
+    # ----------------------------------------------------
 
-    if execution_status:
+    execution_status = str(
+
+        workflow.get(
+            "execution_status",
+            ""
+        )
+
+    ).upper()
+
+
+    # ----------------------------------------------------
+    # VERIFICATION STATUS
+    # ----------------------------------------------------
+
+    verification_status = str(
+
+        workflow.get(
+            "verification_status",
+            ""
+        )
+
+    ).upper()
+
+
+    # ====================================================
+    # FINAL VERIFIED STATE
+    # ====================================================
+
+    if (
+
+        verification_status == "VERIFIED"
+
+        or
+
+        execution_status == "SANDBOX_VERIFIED"
+
+        or
+
+        approval_status == "VERIFIED"
+
+    ):
+
+        record["approval_status"] = (
+            "VERIFIED"
+        )
+
+        record["action_status"] = (
+            "VERIFIED"
+        )
 
         record["execution_status"] = (
-            execution_status
+            "SANDBOX_VERIFIED"
         )
 
         record["execution_result"] = (
-            execution_status
+            "SANDBOX_VERIFIED"
         )
-
-        if execution_status in [
-            "EXECUTED",
-            "SANDBOX_VERIFIED",
-            "REVIEW_ONLY"
-        ]:
-
-            record["action_status"] = (
-                execution_status
-            )
-
-
-    verification_status = workflow.get(
-        "verification_status"
-    )
-
-    if verification_status:
 
         record["verification_status"] = (
-            verification_status
+            "VERIFIED"
         )
 
-        if verification_status == "VERIFIED":
 
-            record["approval_status"] = (
-                "VERIFIED"
-            )
+        return record
 
-            record["action_status"] = (
-                "VERIFIED"
-            )
 
-            record["execution_result"] = (
-                "SANDBOX_VERIFIED"
-            )
+    # ====================================================
+    # SANDBOX EXECUTED STATE
+    # ====================================================
+
+    if execution_status in [
+
+        "EXECUTED",
+
+        "SANDBOX_EXECUTED"
+
+    ]:
+
+        record["approval_status"] = (
+            "APPROVED"
+        )
+
+        record["action_status"] = (
+            "SANDBOX_EXECUTED"
+        )
+
+        record["execution_status"] = (
+            "SANDBOX_EXECUTED"
+        )
+
+        record["execution_result"] = (
+            "SANDBOX_EXECUTED"
+        )
+
+        record["verification_status"] = (
+            "PENDING"
+        )
+
+
+        return record
+
+
+    # ====================================================
+    # REVIEW ONLY STATE
+    # ====================================================
+
+    if execution_status == "REVIEW_ONLY":
+
+        record["action_status"] = (
+            "REVIEW_ONLY"
+        )
+
+        record["execution_status"] = (
+            "REVIEW_ONLY"
+        )
+
+        record["execution_result"] = (
+            "REVIEW_ONLY"
+        )
+
+        record["verification_status"] = (
+            "NOT_REQUIRED"
+        )
+
+
+        return record
+
+
+    # ====================================================
+    # APPROVED STATE
+    # ====================================================
+
+    if approval_status == "APPROVED":
+
+        record["approval_status"] = (
+            "APPROVED"
+        )
+
+        record["action_status"] = (
+            "APPROVED"
+        )
+
+        record["execution_status"] = (
+            "NOT_EXECUTED"
+        )
+
+        record["execution_result"] = (
+            "NOT_EXECUTED"
+        )
+
+        record["verification_status"] = (
+            ""
+        )
+
+
+        return record
+
+
+    # ====================================================
+    # REJECTED STATE
+    # ====================================================
+
+    if approval_status == "REJECTED":
+
+        record["approval_status"] = (
+            "REJECTED"
+        )
+
+        record["action_status"] = (
+            "REJECTED"
+        )
+
+        record["execution_status"] = (
+            "NOT_EXECUTED"
+        )
+
+        record["execution_result"] = (
+            "NOT_EXECUTED"
+        )
+
+        record["verification_status"] = (
+            ""
+        )
+
+
+        return record
+
+
+    # ====================================================
+    # DEFAULT PENDING APPROVAL STATE
+    # ====================================================
+
+    record["approval_status"] = (
+        "PENDING_APPROVAL"
+    )
+
+    record["action_status"] = (
+        "PENDING_APPROVAL"
+    )
+
+    record["execution_status"] = (
+        "NOT_EXECUTED"
+    )
+
+    record["execution_result"] = (
+        "NOT_EXECUTED"
+    )
+
+    record["verification_status"] = (
+        ""
+    )
+
 
     return record
-
-
 # ============================================================
 # SINGLE CONTROLLER ACTION
 # ============================================================
