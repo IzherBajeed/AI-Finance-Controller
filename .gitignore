@@ -54,3 +54,8 @@ Thumbs.db
 # ==========================================
 *.log
 project-output.txt
+# ==========================================
+# Vite production build output
+# ==========================================
+public/index.html
+public/assets/
